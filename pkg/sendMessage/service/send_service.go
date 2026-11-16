@@ -24,6 +24,7 @@ import (
 	config "github.com/evolution-foundation/evolution-go/pkg/config"
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
+	message_repository "github.com/evolution-foundation/evolution-go/pkg/message/repository"
 	"github.com/evolution-foundation/evolution-go/pkg/utils"
 	whatsmeow_service "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/service"
 	"github.com/gabriel-vasile/mimetype"
@@ -53,10 +54,11 @@ type SendService interface {
 }
 
 type sendService struct {
-	clientPointer    map[string]*whatsmeow.Client
-	whatsmeowService whatsmeow_service.WhatsmeowService
-	config           *config.Config
-	loggerWrapper    *logger_wrapper.LoggerManager
+	clientPointer     map[string]*whatsmeow.Client
+	whatsmeowService  whatsmeow_service.WhatsmeowService
+	messageRepository message_repository.MessageRepository
+	config            *config.Config
+	loggerWrapper     *logger_wrapper.LoggerManager
 }
 
 type SendDataStruct struct {
@@ -2778,6 +2780,14 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 
 	s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Message sent successfully! ServerID: %d", instance.Id, response.ServerID)
 
+	if s.config.DatabaseSaveMessages {
+		go func(instanceID, messageID string) {
+			if err := s.messageRepository.TrackMessage(instanceID, messageID); err != nil {
+				s.loggerWrapper.GetLogger(instanceID).LogError("[%s] Failed to track sent message %s: %v", instanceID, messageID, err)
+			}
+		}(instance.Id, message)
+	}
+
 	messageInfo := types.MessageInfo{
 		MessageSource: types.MessageSource{
 			Chat:     recipient,
@@ -3368,13 +3378,15 @@ func (s *sendService) sendStatusWebhook(messageSent *MessageSendStruct, instance
 func NewSendService(
 	clientPointer map[string]*whatsmeow.Client,
 	whatsmeowService whatsmeow_service.WhatsmeowService,
+	messageRepository message_repository.MessageRepository,
 	config *config.Config,
 	loggerWrapper *logger_wrapper.LoggerManager,
 ) SendService {
 	return &sendService{
-		clientPointer:    clientPointer,
-		whatsmeowService: whatsmeowService,
-		config:           config,
-		loggerWrapper:    loggerWrapper,
+		clientPointer:     clientPointer,
+		whatsmeowService:  whatsmeowService,
+		messageRepository: messageRepository,
+		config:            config,
+		loggerWrapper:     loggerWrapper,
 	}
 }

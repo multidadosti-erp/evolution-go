@@ -1,6 +1,8 @@
 # Git
 .git
 .gitignore
+.env
+.env.*
 
 # Documentation
 README.md
@@ -35,8 +37,10 @@ Makefile
 *_test.go
 *.test
 
-# Manager/dist é necessário - serve arquivos estáticos do frontend React
-# Não excluir - precisa estar na imagem final para ser acessado via /manager
+# O frontend é compilado a partir do código em manager/ durante o build.
+manager/node_modules/
+manager/dist/
+manager/*.tsbuildinfo
 
 # Keep these important files/folders for build:
 # - whatsmeow/ (nossa versão local modificada)

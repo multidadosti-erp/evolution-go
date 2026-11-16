@@ -158,6 +158,10 @@ func (i *instanceRepository) Delete(instanceId string) error {
 			return fmt.Errorf("erro ao deletar mensagens: %v", err)
 		}
 
+		if err := tx.Where("instance_id = ?", instanceId).Delete(&message_model.TrackedMessage{}).Error; err != nil {
+			return fmt.Errorf("erro ao deletar contagem de mensagens: %v", err)
+		}
+
 		// Deleta a instância
 		if err := tx.Where("id = ?", instanceId).Delete(&instance_model.Instance{}).Error; err != nil {
 			return fmt.Errorf("erro ao deletar instância: %v", err)

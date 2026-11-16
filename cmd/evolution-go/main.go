@@ -28,7 +28,6 @@ import (
 	community_handler "github.com/evolution-foundation/evolution-go/pkg/community/handler"
 	community_service "github.com/evolution-foundation/evolution-go/pkg/community/service"
 	config "github.com/evolution-foundation/evolution-go/pkg/config"
-	"github.com/evolution-foundation/evolution-go/pkg/core"
 	producer_interfaces "github.com/evolution-foundation/evolution-go/pkg/events/interfaces"
 	nats_producer "github.com/evolution-foundation/evolution-go/pkg/events/nats"
 	rabbitmq_producer "github.com/evolution-foundation/evolution-go/pkg/events/rabbitmq"
@@ -82,7 +81,7 @@ func init() {
 	}
 }
 
-func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.Config, conn *amqp.Connection, exPath string, runtimeCtx *core.RuntimeContext) *gin.Engine {
+func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.Config, conn *amqp.Connection, exPath string) *gin.Engine {
 	killChannel := make(map[string](chan bool))
 	clientPointer := make(map[string]*whatsmeow.Client)
 
@@ -187,7 +186,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		config,
 		loggerWrapper,
 	)
-	sendMessageService := send_service.NewSendService(clientPointer, whatsmeowService, config, loggerWrapper)
+	sendMessageService := send_service.NewSendService(clientPointer, whatsmeowService, messageRepository, config, loggerWrapper)
 	userService := user_service.NewUserService(clientPointer, whatsmeowService, loggerWrapper)
 	messageService := message_service.NewMessageService(clientPointer, messageRepository, whatsmeowService, loggerWrapper)
 	chatService := chat_service.NewChatService(clientPointer, whatsmeowService, loggerWrapper)
@@ -216,11 +215,6 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		c.Next()
 	})
 
-	r.Use(core.GateMiddleware(runtimeCtx))
-
-	// License routes (always accessible, even without license)
-	core.LicenseRoutes(r, runtimeCtx)
-
 	// Passkey ceremony routes — PUBLIC (called by the browser extension from the
 	// web.whatsapp.com origin, gated only by an opaque ephemeral token).
 	passkey_handler.RegisterRoutes(r, whatsmeowService)
@@ -230,7 +224,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		instance_handler.NewInstanceHandler(instanceService, config),
 		user_handler.NewUserHandler(userService),
 		send_handler.NewSendHandler(sendMessageService),
-		message_handler.NewMessageHandler(messageService),
+		message_handler.NewMessageHandler(messageService, config),
 		chat_handler.NewChatHandler(chatService),
 		group_handler.NewGroupHandler(groupService),
 		call_handler.NewCallHandler(callService),
@@ -262,7 +256,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 }
 
 func migrate(db *gorm.DB) {
-	err := db.AutoMigrate(&instance_model.Instance{}, &message_model.Message{}, &label_model.Label{})
+	err := db.AutoMigrate(&instance_model.Instance{}, &message_model.Message{}, &message_model.TrackedMessage{}, &label_model.Label{})
 
 	if err != nil {
 		log.Fatal(err)
@@ -342,8 +336,6 @@ func main() {
 
 	logger.LogInfo("Starting Evolution GO version %s", version)
 
-	startTime := time.Now()
-
 	db, err := cfg.CreateUsersDB()
 	if err != nil {
 		log.Fatal(err)
@@ -368,14 +360,6 @@ func main() {
 	}
 
 	migrate(db)
-
-	// Initialize core DB + license runtime
-	core.SetDB(db)
-	if err := core.MigrateDB(); err != nil {
-		log.Fatal("Failed to migrate runtime_configs: ", err)
-	}
-	tier := "evolution-go"
-	runtimeCtx := core.InitializeRuntime(tier, version, cfg.GlobalApiKey)
 
 	var conn *amqp.Connection
 
@@ -405,13 +389,7 @@ func main() {
 		logger.LogInfo("RabbitMQ URL not configured, skipping RabbitMQ connection")
 	}
 
-	r := setupRouter(db, authDB, sqliteDB, cfg, conn, exPath, runtimeCtx)
-
-	// Graceful shutdown with heartbeat
-	heartbeatCtx, heartbeatCancel := context.WithCancel(context.Background())
-	defer heartbeatCancel()
-
-	core.StartHeartbeat(heartbeatCtx, runtimeCtx, startTime)
+	r := setupRouter(db, authDB, sqliteDB, cfg, conn, exPath)
 
 	srv := &http.Server{
 		Addr:    ":" + os.Getenv("SERVER_PORT"),
@@ -430,11 +408,6 @@ func main() {
 
 	<-quit
 	logger.LogInfo("[SHUTDOWN] Signal received, shutting down...")
-
-	// Stop heartbeat loop
-	heartbeatCancel()
-
-	core.Shutdown(runtimeCtx)
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

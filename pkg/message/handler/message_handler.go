@@ -3,6 +3,7 @@ package message_handler
 import (
 	"net/http"
 
+	"github.com/evolution-foundation/evolution-go/pkg/config"
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
 	message_service "github.com/evolution-foundation/evolution-go/pkg/message/service"
 	"github.com/gin-gonic/gin"
@@ -15,12 +16,33 @@ type MessageHandler interface {
 	MarkPlayed(ctx *gin.Context)
 	DownloadMedia(ctx *gin.Context)
 	GetMessageStatus(ctx *gin.Context)
+	CountTrackedMessages(ctx *gin.Context)
 	DeleteMessageEveryone(ctx *gin.Context)
 	EditMessage(ctx *gin.Context)
 }
 
 type messageHandler struct {
 	messageService message_service.MessageService
+	config         *config.Config
+}
+
+// CountTrackedMessages retorna mensagens observadas após ativar a contagem.
+func (m *messageHandler) CountTrackedMessages(ctx *gin.Context) {
+	instance, ok := ctx.MustGet("instance").(*instance_model.Instance)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "instance not found"})
+		return
+	}
+	if !m.config.DatabaseSaveMessages {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "message tracking is disabled"})
+		return
+	}
+	count, err := m.messageService.CountTrackedMessages(instance)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": count})
 }
 
 // React a message
@@ -415,8 +437,10 @@ func (m *messageHandler) EditMessage(ctx *gin.Context) {
 
 func NewMessageHandler(
 	messageService message_service.MessageService,
+	config *config.Config,
 ) MessageHandler {
 	return &messageHandler{
 		messageService: messageService,
+		config:         config,
 	}
 }

@@ -501,7 +501,8 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	client.EnableAutoReconnect = false
+	// Reutiliza a sessão e o backoff nativos, sem recriar clientes a cada queda.
+	client.EnableAutoReconnect = true
 	client.AutoTrustIdentity = true
 
 	mycli := &MyClient{
@@ -609,8 +610,6 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 
 	}
-
-	// Removed auto-reconnect logic to prevent infinite loops
 
 	for {
 		select {
@@ -1280,6 +1279,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		if parsedMessageType == "ignore" || strings.HasPrefix(parsedMessageType, "unknown_protocol_") {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Message ignored because it's a unknown protocol message", mycli.userID)
 			return
+		}
+
+		if mycli.config.DatabaseSaveMessages {
+			go func(messageID string) {
+				if err := mycli.messageRepository.TrackMessage(mycli.userID, messageID); err != nil {
+					mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Failed to track message %s: %v", mycli.userID, messageID, err)
+				}
+			}(evt.Info.ID)
 		}
 
 		if postMap["data"] != nil {
@@ -2021,13 +2028,19 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Error updating instance: %s", mycli.Instance.Id, err)
 		}
 
-		// Trigger instance restart via websocket-capable service (non-blocking)
-		go func(instanceID string) {
-			mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] Disconnected detected, restarting instance", instanceID)
-			if err := mycli.service.ReconnectClient(instanceID); err != nil {
-				mycli.loggerWrapper.GetLogger(instanceID).LogError("[%s] Failed to restart instance: %v", instanceID, err)
-			}
-		}(mycli.userID)
+		// O whatsmeow reconecta sessões pareadas; não iniciar outro cliente aqui.
+	case *events.KeepAliveTimeout:
+		doWebhook = true
+		postMap["event"] = "KeepAliveTimeout"
+		postMap["data"] = map[string]interface{}{
+			"ErrorCount":  evt.ErrorCount,
+			"LastSuccess": evt.LastSuccess,
+		}
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Keepalive timed out (%d consecutive failures, last success: %s); recovery is managed by whatsmeow", mycli.userID, evt.ErrorCount, evt.LastSuccess.Format(time.RFC3339))
+	case *events.KeepAliveRestored:
+		doWebhook = true
+		postMap["event"] = "KeepAliveRestored"
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Keepalive restored", mycli.userID)
 	case *events.LabelEdit:
 		doWebhook = true
 		postMap["event"] = "LabelEdit"
@@ -2262,7 +2275,7 @@ func (w *whatsmeowService) CallWebhook(instance *instance_model.Instance, queueN
 			w.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Event received of type %s", instance.Id, eventType)
 			w.sendToQueueOrWebhook(instance, queueName, jsonData)
 		}
-	case "Connected", "PairSuccess", "TemporaryBan", "LoggedOut", "ConnectFailure", "Disconnected":
+	case "Connected", "PairSuccess", "TemporaryBan", "LoggedOut", "ConnectFailure", "Disconnected", "KeepAliveTimeout", "KeepAliveRestored":
 		if contains(subscriptions, "CONNECTION") {
 			w.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Event received of type %s", instance.Id, eventType)
 			w.sendToQueueOrWebhook(instance, queueName, jsonData)
@@ -2550,7 +2563,7 @@ func (w *whatsmeowService) SendToGlobalQueues(eventType string, payload []byte, 
 				globalEventType = "CHAT_PRESENCE"
 			case "CallOffer", "CallAccept", "CallTerminate", "CallOfferNotice", "CallRelayLatency":
 				globalEventType = "CALL"
-			case "Connected", "PairSuccess", "TemporaryBan", "LoggedOut", "ConnectFailure", "Disconnected":
+			case "Connected", "PairSuccess", "TemporaryBan", "LoggedOut", "ConnectFailure", "Disconnected", "KeepAliveTimeout", "KeepAliveRestored":
 				globalEventType = "CONNECTION"
 			case "LabelEdit", "LabelAssociationChat", "LabelAssociationMessage":
 				globalEventType = "LABEL"
@@ -2612,7 +2625,7 @@ func (w *whatsmeowService) SendToGlobalQueues(eventType string, payload []byte, 
 			globalEventType = "CHAT_PRESENCE"
 		case "CallOffer", "CallAccept", "CallTerminate", "CallOfferNotice", "CallRelayLatency":
 			globalEventType = "CALL"
-		case "Connected", "PairSuccess", "TemporaryBan", "LoggedOut", "ConnectFailure", "Disconnected":
+		case "Connected", "PairSuccess", "TemporaryBan", "LoggedOut", "ConnectFailure", "Disconnected", "KeepAliveTimeout", "KeepAliveRestored":
 			globalEventType = "CONNECTION"
 		case "LabelEdit", "LabelAssociationChat", "LabelAssociationMessage":
 			globalEventType = "LABEL"

@@ -16,6 +16,11 @@ type Message struct {
 	Referral  json.RawMessage `json:"referral,omitempty" gorm:"type:jsonb"`
 }
 
+type TrackedMessage struct {
+	InstanceID string `gorm:"type:uuid;primaryKey"`
+	MessageID  string `gorm:"primaryKey"`
+}
+
 func (m *Message) BeforeCreate(tx *gorm.DB) (err error) {
 	m.Id = uuid.New().String()
 	return

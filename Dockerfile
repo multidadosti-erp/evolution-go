@@ -1,3 +1,13 @@
+FROM node:20-alpine AS manager-build
+
+WORKDIR /manager
+COPY manager/package*.json ./
+RUN npm ci --ignore-scripts
+COPY manager/src/ ./src/
+COPY manager/tsconfig.json manager/tsconfig.app.json manager/tsconfig.node.json manager/vite.config.ts manager/index.html manager/components.json ./
+COPY manager/public/ ./public/
+RUN npm run build
+
 FROM golang:1.26.10-alpine AS build
 
 RUN apk update && apk add --no-cache git build-base libjpeg-turbo-dev libwebp-dev
@@ -25,7 +35,7 @@ RUN apk update && apk add --no-cache tzdata ffmpeg libjpeg-turbo libwebp poppler
 WORKDIR /app
 
 COPY --from=build /build/server .
-COPY --from=build /build/manager/dist ./manager/dist
+COPY --from=manager-build /manager/dist ./manager/dist
 COPY --from=build /build/VERSION ./VERSION
 
 ENV TZ=America/Sao_Paulo

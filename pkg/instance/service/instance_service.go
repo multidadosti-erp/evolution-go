@@ -101,6 +101,11 @@ type QrcodeStruct struct {
 	PasskeyCode    string `json:"passkeyCode,omitempty"`
 }
 
+type qrClient interface {
+	IsLoggedIn() bool
+	IsConnected() bool
+}
+
 type PairStruct struct {
 	Subscribe []string `json:"subscribe"`
 	Phone     string   `json:"phone"`
@@ -412,17 +417,24 @@ func (i instances) Status(instance *instance_model.Instance) (*StatusStruct, err
 }
 
 func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, error) {
+	var client qrClient
+	if existing := i.clientPointer[instance.Id]; existing != nil {
+		client = existing
+	}
+	return i.getQr(instance, client)
+}
+
+func (i instances) getQr(instance *instance_model.Instance, client qrClient) (*QrcodeStruct, error) {
 	logger := i.loggerWrapper.GetLogger(instance.Id)
-	client := i.clientPointer[instance.Id]
 
-	// Se não há cliente ou o cliente está logado, precisamos iniciar um novo cliente
-	if client == nil || client.IsLoggedIn() {
-		if client != nil && client.IsLoggedIn() {
-			logger.LogInfo("[%s] Client is logged in, starting new instance for QR code", instance.Id)
-		} else {
-			logger.LogInfo("[%s] No client found, starting new instance for QR code", instance.Id)
-		}
+	if client != nil && client.IsLoggedIn() {
+		logger.LogInfo("[%s] Client is already logged in", instance.Id)
+		return nil, fmt.Errorf("session already logged in")
+	}
 
+	// Se não há cliente, iniciar uma instância para gerar o QR code.
+	if client == nil {
+		logger.LogInfo("[%s] No client found, starting new instance for QR code", instance.Id)
 		// Iniciar nova instância para gerar QR code
 		err := i.whatsmeowService.StartInstance(instance.Id)
 		if err != nil {
@@ -435,8 +447,8 @@ func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, erro
 		time.Sleep(3 * time.Second)
 
 		// Verificar novamente se há cliente
-		client = i.clientPointer[instance.Id]
-		if client != nil && client.IsLoggedIn() {
+		startedClient := i.clientPointer[instance.Id]
+		if startedClient != nil && startedClient.IsLoggedIn() {
 			return nil, fmt.Errorf("session already logged in")
 		}
 	} else if !client.IsConnected() {

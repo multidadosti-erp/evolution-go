@@ -11,6 +11,8 @@ type MessageRepository interface {
 	GetMessageByID(messageID string) (*message_model.Message, error)
 	DeleteAllMessages() (int64, error)
 	GetLatestMessageID(source string) (string, string, error)
+	TrackMessage(instanceID, messageID string) error
+	CountTrackedMessages(instanceID string) (int64, error)
 }
 
 type messageRepository struct {
@@ -62,6 +64,19 @@ func (m *messageRepository) GetLatestMessageID(source string) (string, string, e
 	}
 
 	return message.MessageID, message.Timestamp, nil
+}
+
+func (m *messageRepository) TrackMessage(instanceID, messageID string) error {
+	return m.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&message_model.TrackedMessage{
+		InstanceID: instanceID,
+		MessageID:  messageID,
+	}).Error
+}
+
+func (m *messageRepository) CountTrackedMessages(instanceID string) (int64, error) {
+	var count int64
+	err := m.db.Model(&message_model.TrackedMessage{}).Where("instance_id = ?", instanceID).Count(&count).Error
+	return count, err
 }
 
 func NewMessageRepository(db *gorm.DB) MessageRepository {

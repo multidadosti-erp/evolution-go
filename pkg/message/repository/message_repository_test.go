@@ -19,6 +19,7 @@ func TestInsertMessagePreservesReferralOnStatusUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlmock db: %v", err)
 	}
+
 	defer sqlDB.Close()
 
 	var logBuffer bytes.Buffer
@@ -76,5 +77,48 @@ func TestInsertMessagePreservesReferralOnStatusUpdate(t *testing.T) {
 	}
 	if !strings.Contains(updatedSQL, `"timestamp"="excluded"."timestamp","status"="excluded"."status","source"="excluded"."source"`) {
 		t.Fatalf("expected updated upsert SQL to keep core columns, got %q", updatedSQL)
+	}
+}
+
+func TestTrackedMessagesUseInstanceAndIgnoreDuplicates(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, WithoutReturning: true}), &gorm.Config{
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := NewMessageRepository(db)
+	for _, row := range []struct {
+		instance string
+		inserted int64
+	}{
+		{"instance-1", 1},
+		{"instance-1", 0},
+		{"instance-2", 1},
+	} {
+		mock.ExpectExec(`INSERT INTO "tracked_messages" .*ON CONFLICT DO NOTHING`).
+			WithArgs(row.instance, "message-1").
+			WillReturnResult(sqlmock.NewResult(0, row.inserted))
+		if err := repo.TrackMessage(row.instance, "message-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, instance := range []string{"instance-1", "instance-2"} {
+		mock.ExpectQuery(`SELECT count\(\*\) FROM "tracked_messages" WHERE instance_id = \$1`).
+			WithArgs(instance).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		count, err := repo.CountTrackedMessages(instance)
+		if err != nil || count != 1 {
+			t.Fatalf("count for %s: got %d, error %v", instance, count, err)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

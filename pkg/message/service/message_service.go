@@ -30,6 +30,7 @@ type MessageService interface {
 	MarkPlayed(data *MarkPlayedStruct, instance *instance_model.Instance) (string, error)
 	DownloadMedia(data *DownloadMediaStruct, instance *instance_model.Instance, request *http.Request) (*dataurl.DataURL, string, error)
 	GetMessageStatus(data *MessageStatusStruct, instance *instance_model.Instance) (*message_model.Message, string, error)
+	CountTrackedMessages(instance *instance_model.Instance) (int64, error)
 	DeleteMessageEveryone(data *MessageStruct, instance *instance_model.Instance) (string, string, error)
 	EditMessage(data *EditMessageStruct, instance *instance_model.Instance) (string, string, error)
 }
@@ -39,6 +40,10 @@ type messageService struct {
 	messageRepository message_repository.MessageRepository
 	whatsmeowService  whatsmeow_service.WhatsmeowService
 	loggerWrapper     *logger_wrapper.LoggerManager
+}
+
+func (m *messageService) CountTrackedMessages(instance *instance_model.Instance) (int64, error) {
+	return m.messageRepository.CountTrackedMessages(instance.Id)
 }
 
 type ReactStruct struct {

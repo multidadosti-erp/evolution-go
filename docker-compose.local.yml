@@ -1,0 +1,49 @@
+name: evolution-go-local
+
+services:
+  proxy:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:18080:80"
+    volumes:
+      - ./docker/local-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - evolution-go
+      - manager
+    networks:
+      - local
+      - ingress
+
+  manager:
+    build:
+      context: ./manager
+    image: evolution-manager-local:dev
+    networks:
+      - local
+
+  evolution-go:
+    build:
+      context: .
+      args:
+        VERSION: local
+    image: evolution-go-local:dev
+    environment:
+      SERVER_PORT: "4000"
+      CLIENT_NAME: "evolution-local"
+      GLOBAL_API_KEY: "${LOCAL_API_KEY:?Defina LOCAL_API_KEY no arquivo .env}"
+      POSTGRES_AUTH_DB: "postgresql://${LOCAL_DB_USER:?Defina LOCAL_DB_USER no arquivo .env}:${LOCAL_DB_PASSWORD:?Defina LOCAL_DB_PASSWORD no arquivo .env}@${LOCAL_DB_HOST:-172.18.0.1}:5432/evolution_go_local_auth?sslmode=disable"
+      POSTGRES_USERS_DB: "postgresql://${LOCAL_DB_USER:?Defina LOCAL_DB_USER no arquivo .env}:${LOCAL_DB_PASSWORD:?Defina LOCAL_DB_PASSWORD no arquivo .env}@${LOCAL_DB_HOST:-172.18.0.1}:5432/evolution_go_local_users?sslmode=disable"
+      DATABASE_SAVE_MESSAGES: "true"
+      CONNECT_ON_STARTUP: "false"
+      WEBHOOK_URL: ""
+      AMQP_GLOBAL_ENABLED: "false"
+      NATS_GLOBAL_ENABLED: "false"
+      MINIO_ENABLED: "false"
+    networks:
+      - local
+      - ingress
+
+networks:
+  local:
+    internal: true
+  ingress:
